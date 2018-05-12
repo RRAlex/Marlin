@@ -467,9 +467,7 @@ static void lcd_implementation_init(
 }
 
 void lcd_implementation_clear() { lcd.clear(); }
-
 void lcd_print(const char c) { charset_mapper(c); }
-
 void lcd_print(const char *str) { while (*str) lcd.print(*str++); }
 void lcd_printPGM(const char *str) { while (const char c = pgm_read_byte(str)) lcd.print(c), ++str; }
 
@@ -599,32 +597,37 @@ void lcd_kill_screen() {
   lcd_printPGM_utf(PSTR(MSG_PLEASE_RESET));
 }
 
-FORCE_INLINE void _draw_axis_label(const AxisEnum axis, const char* const pstr, const bool blink) {
+//
+// Before homing, blink '123' <-> '???'.
+// Homed but unknown... '123' <-> '   '.
+// Homed and known, display constantly.
+//
+FORCE_INLINE void _draw_axis_value(const AxisEnum axis, const char *value, const bool blink) {
+  lcd_print('X' + uint8_t(axis));
   if (blink)
-    lcd_printPGM(pstr);
+    lcd.print(value);
   else {
     if (!axis_homed[axis])
-      lcd.write('?');
+      while (const char c = *value++) lcd_print(c <= '.' ? c : '?');
     else {
       #if DISABLED(HOME_AFTER_DEACTIVATE) && DISABLED(DISABLE_REDUCED_ACCURACY_WARNING)
         if (!axis_known_position[axis])
-          lcd.write(' ');
+          lcd_printPGM(axis == Z_AXIS ? PSTR("      ") : PSTR("    "));
         else
       #endif
-          lcd_printPGM(pstr);
+          lcd.print(value);
     }
   }
 }
 
 FORCE_INLINE void _draw_heater_status(const int8_t heater, const char prefix, const bool blink) {
-  #if TEMP_SENSOR_BED
+  #if HAS_HEATED_BED
     const bool isBed = heater < 0;
+    const float t1 = (isBed ? thermalManager.degBed()       : thermalManager.degHotend(heater)),
+                t2 = (isBed ? thermalManager.degTargetBed() : thermalManager.degTargetHotend(heater));
   #else
-    constexpr bool isBed = false;
+    const float t1 = thermalManager.degHotend(heater), t2 = thermalManager.degTargetHotend(heater);
   #endif
-
-  const float t1 = (isBed ? thermalManager.degBed()       : thermalManager.degHotend(heater)),
-              t2 = (isBed ? thermalManager.degTargetBed() : thermalManager.degTargetHotend(heater));
 
   if (prefix >= 0) lcd.print(prefix);
 
@@ -634,12 +637,11 @@ FORCE_INLINE void _draw_heater_status(const int8_t heater, const char prefix, co
   #if !HEATER_IDLE_HANDLER
     UNUSED(blink);
   #else
-    const bool is_idle = (!isBed ? thermalManager.is_heater_idle(heater) :
-      #if HAS_TEMP_BED
-        thermalManager.is_bed_idle()
-      #else
-        false
+    const bool is_idle = (
+      #if HAS_HEATED_BED
+        isBed ? thermalManager.is_bed_idle() :
       #endif
+      thermalManager.is_heater_idle(heater)
     );
 
     if (!blink && is_idle) {
@@ -801,25 +803,19 @@ static void lcd_implementation_status_screen() {
         ), blink);
 
       #else // HOTENDS <= 2 && (HOTENDS <= 1 || !TEMP_SENSOR_BED)
-        // Before homing the axis letters are blinking 'X' <-> '?'.
-        // When axis is homed but axis_known_position is false the axis letters are blinking 'X' <-> ' '.
-        // When everything is ok you see a constant 'X'.
 
-        _draw_axis_label(X_AXIS, PSTR(MSG_X), blink);
-        lcd.print(ftostr4sign(LOGICAL_X_POSITION(current_position[X_AXIS])));
+        _draw_axis_value(X_AXIS, ftostr4sign(LOGICAL_X_POSITION(current_position[X_AXIS])), blink);
 
         lcd.write(' ');
 
-        _draw_axis_label(Y_AXIS, PSTR(MSG_Y), blink);
-        lcd.print(ftostr4sign(LOGICAL_Y_POSITION(current_position[Y_AXIS])));
+        _draw_axis_value(Y_AXIS, ftostr4sign(LOGICAL_Y_POSITION(current_position[Y_AXIS])), blink);
 
       #endif // HOTENDS <= 2 && (HOTENDS <= 1 || !TEMP_SENSOR_BED)
 
     #endif // LCD_WIDTH >= 20
 
     lcd.setCursor(LCD_WIDTH - 8, 1);
-    _draw_axis_label(Z_AXIS, PSTR(MSG_Z), blink);
-    lcd.print(ftostr52sp(FIXFLOAT(LOGICAL_Z_POSITION(current_position[Z_AXIS]))));
+    _draw_axis_value(Z_AXIS, ftostr52sp(LOGICAL_Z_POSITION(current_position[Z_AXIS])), blink);
 
     #if HAS_LEVELING && !TEMP_SENSOR_BED
       lcd.write(planner.leveling_active || blink ? '_' : ' ');
@@ -1228,10 +1224,10 @@ static void lcd_implementation_status_screen() {
          * Show X and Y positions
          */
         _XLABEL(_PLOT_X, 0);
-        lcd.print(ftostr32(LOGICAL_X_POSITION(pgm_read_float(&ubl._mesh_index_to_xpos[x]))));
+        lcd.print(ftostr52(LOGICAL_X_POSITION(pgm_read_float(&ubl._mesh_index_to_xpos[x]))));
 
         _YLABEL(_LCD_W_POS, 0);
-        lcd.print(ftostr32(LOGICAL_Y_POSITION(pgm_read_float(&ubl._mesh_index_to_ypos[inverted_y]))));
+        lcd.print(ftostr52(LOGICAL_Y_POSITION(pgm_read_float(&ubl._mesh_index_to_ypos[inverted_y]))));
 
         lcd.setCursor(_PLOT_X, 0);
 
@@ -1464,9 +1460,9 @@ static void lcd_implementation_status_screen() {
          * Show all values at right of screen
          */
         _XLABEL(_LCD_W_POS, 1);
-        lcd.print(ftostr32(LOGICAL_X_POSITION(pgm_read_float(&ubl._mesh_index_to_xpos[x]))));
+        lcd.print(ftostr52(LOGICAL_X_POSITION(pgm_read_float(&ubl._mesh_index_to_xpos[x]))));
         _YLABEL(_LCD_W_POS, 2);
-        lcd.print(ftostr32(LOGICAL_Y_POSITION(pgm_read_float(&ubl._mesh_index_to_ypos[inverted_y]))));
+        lcd.print(ftostr52(LOGICAL_Y_POSITION(pgm_read_float(&ubl._mesh_index_to_ypos[inverted_y]))));
 
         /**
          * Show the location value

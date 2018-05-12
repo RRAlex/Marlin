@@ -342,7 +342,7 @@
           xi_cnt--;
         }
 
-        //if (xi_cnt < 0 || yi_cnt < 0) break; // Too far! Exit the loop and go to FINAL_MOVE
+        if (xi_cnt < 0 || yi_cnt < 0) break; // Too far! Exit the loop and go to FINAL_MOVE
       }
 
       if (g26_debug_flag)
@@ -443,8 +443,8 @@
 
       #if IS_SCARA // scale the feed rate from mm/s to degrees/s
         scara_feed_factor = cartesian_xy_mm * inv_segments * feedrate;
-        scara_oldA = stepper.get_axis_position_degrees(A_AXIS);
-        scara_oldB = stepper.get_axis_position_degrees(B_AXIS);
+        scara_oldA = planner.get_axis_position_degrees(A_AXIS);
+        scara_oldB = planner.get_axis_position_degrees(B_AXIS);
       #endif
 
       const float diff[XYZE] = {
