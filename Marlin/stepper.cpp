@@ -167,20 +167,20 @@ volatile int32_t Stepper::endstops_trigsteps[XYZ];
   #define LOCKED_X2_MOTOR locked_x2_motor
   #define LOCKED_Y2_MOTOR locked_y2_motor
   #define LOCKED_Z2_MOTOR locked_z2_motor
-  #define DUAL_ENDSTOP_APPLY_STEP(AXIS,v)                                                                                                           \
-    if (performing_homing) {                                                                                                                        \
-      if (AXIS##_HOME_DIR < 0) {                                                                                                                    \
-        if (!(TEST(endstops.old_endstop_bits, AXIS##_MIN) && count_direction[AXIS##_AXIS] < 0) && !LOCKED_##AXIS##_MOTOR) AXIS##_STEP_WRITE(v);     \
-        if (!(TEST(endstops.old_endstop_bits, AXIS##2_MIN) && count_direction[AXIS##_AXIS] < 0) && !LOCKED_##AXIS##2_MOTOR) AXIS##2_STEP_WRITE(v);  \
-      }                                                                                                                                             \
-      else {                                                                                                                                        \
-        if (!(TEST(endstops.old_endstop_bits, AXIS##_MAX) && count_direction[AXIS##_AXIS] > 0) && !LOCKED_##AXIS##_MOTOR) AXIS##_STEP_WRITE(v);     \
-        if (!(TEST(endstops.old_endstop_bits, AXIS##2_MAX) && count_direction[AXIS##_AXIS] > 0) && !LOCKED_##AXIS##2_MOTOR) AXIS##2_STEP_WRITE(v);  \
-      }                                                                                                                                             \
-    }                                                                                                                                               \
-    else {                                                                                                                                          \
-      AXIS##_STEP_WRITE(v);                                                                                                                         \
-      AXIS##2_STEP_WRITE(v);                                                                                                                        \
+  #define DUAL_ENDSTOP_APPLY_STEP(A,V)                                                                                                  \
+    if (performing_homing) {                                                                                                            \
+      if (A##_HOME_DIR < 0) {                                                                                                           \
+        if (!(TEST(endstops.old_endstop_bits, A##_MIN) && count_direction[_AXIS(A)] < 0) && !LOCKED_##A##_MOTOR) A##_STEP_WRITE(V);     \
+        if (!(TEST(endstops.old_endstop_bits, A##2_MIN) && count_direction[_AXIS(A)] < 0) && !LOCKED_##A##2_MOTOR) A##2_STEP_WRITE(V);  \
+      }                                                                                                                                 \
+      else {                                                                                                                            \
+        if (!(TEST(endstops.old_endstop_bits, A##_MAX) && count_direction[_AXIS(A)] > 0) && !LOCKED_##A##_MOTOR) A##_STEP_WRITE(V);     \
+        if (!(TEST(endstops.old_endstop_bits, A##2_MAX) && count_direction[_AXIS(A)] > 0) && !LOCKED_##A##2_MOTOR) A##2_STEP_WRITE(V);  \
+      }                                                                                                                                 \
+    }                                                                                                                                   \
+    else {                                                                                                                              \
+      A##_STEP_WRITE(V);                                                                                                                \
+      A##2_STEP_WRITE(V);                                                                                                               \
     }
 #endif
 
@@ -243,59 +243,63 @@ volatile int32_t Stepper::endstops_trigsteps[XYZ];
 
 // intRes = longIn1 * longIn2 >> 24
 // uses:
-// r26 to store 0
-// r27 to store bits 16-23 of the 48bit result. The top bit is used to round the two byte result.
+// A[tmp] to store 0
+// B[tmp] to store bits 16-23 of the 48bit result. The top bit is used to round the two byte result.
 // note that the lower two bytes and the upper byte of the 48bit result are not calculated.
 // this can cause the result to be out by one as the lower bytes may cause carries into the upper ones.
-// B0 A0 are bits 24-39 and are the returned value
-// C1 B1 A1 is longIn1
-// D2 C2 B2 A2 is longIn2
+// B A are bits 24-39 and are the returned value
+// C B A is longIn1
+// D C B A is longIn2
 //
-#define MultiU24X32toH16(intRes, longIn1, longIn2) \
-  asm volatile ( \
-                 A("clr r26") \
-                 A("mul %A1, %B2") \
-                 A("mov r27, r1") \
-                 A("mul %B1, %C2") \
-                 A("movw %A0, r0") \
-                 A("mul %C1, %C2") \
-                 A("add %B0, r0") \
-                 A("mul %C1, %B2") \
-                 A("add %A0, r0") \
-                 A("adc %B0, r1") \
-                 A("mul %A1, %C2") \
-                 A("add r27, r0") \
-                 A("adc %A0, r1") \
-                 A("adc %B0, r26") \
-                 A("mul %B1, %B2") \
-                 A("add r27, r0") \
-                 A("adc %A0, r1") \
-                 A("adc %B0, r26") \
-                 A("mul %C1, %A2") \
-                 A("add r27, r0") \
-                 A("adc %A0, r1") \
-                 A("adc %B0, r26") \
-                 A("mul %B1, %A2") \
-                 A("add r27, r1") \
-                 A("adc %A0, r26") \
-                 A("adc %B0, r26") \
-                 A("lsr r27") \
-                 A("adc %A0, r26") \
-                 A("adc %B0, r26") \
-                 A("mul %D2, %A1") \
-                 A("add %A0, r0") \
-                 A("adc %B0, r1") \
-                 A("mul %D2, %B1") \
-                 A("add %B0, r0") \
-                 A("clr r1") \
-                 : \
-                 "=&r" (intRes) \
-                 : \
-                 "d" (longIn1), \
-                 "d" (longIn2) \
-                 : \
-                 "r26" , "r27" \
-               )
+static FORCE_INLINE uint16_t MultiU24X32toH16(uint32_t longIn1, uint32_t longIn2) {
+  register uint8_t tmp1;
+  register uint8_t tmp2;
+  register uint16_t intRes;
+  __asm__ __volatile__(
+    A("clr %[tmp1]")
+    A("mul %A[longIn1], %B[longIn2]")
+    A("mov %[tmp2], r1")
+    A("mul %B[longIn1], %C[longIn2]")
+    A("movw %A[intRes], r0")
+    A("mul %C[longIn1], %C[longIn2]")
+    A("add %B[intRes], r0")
+    A("mul %C[longIn1], %B[longIn2]")
+    A("add %A[intRes], r0")
+    A("adc %B[intRes], r1")
+    A("mul %A[longIn1], %C[longIn2]")
+    A("add %[tmp2], r0")
+    A("adc %A[intRes], r1")
+    A("adc %B[intRes], %[tmp1]")
+    A("mul %B[longIn1], %B[longIn2]")
+    A("add %[tmp2], r0")
+    A("adc %A[intRes], r1")
+    A("adc %B[intRes], %[tmp1]")
+    A("mul %C[longIn1], %A[longIn2]")
+    A("add %[tmp2], r0")
+    A("adc %A[intRes], r1")
+    A("adc %B[intRes], %[tmp1]")
+    A("mul %B[longIn1], %A[longIn2]")
+    A("add %[tmp2], r1")
+    A("adc %A[intRes], %[tmp1]")
+    A("adc %B[intRes], %[tmp1]")
+    A("lsr %[tmp2]")
+    A("adc %A[intRes], %[tmp1]")
+    A("adc %B[intRes], %[tmp1]")
+    A("mul %D[longIn2], %A[longIn1]")
+    A("add %A[intRes], r0")
+    A("adc %B[intRes], r1")
+    A("mul %D[longIn2], %B[longIn1]")
+    A("add %B[intRes], r0")
+    A("clr r1")
+      : [intRes] "=&r" (intRes),
+        [tmp1] "=&r" (tmp1),
+        [tmp2] "=&r" (tmp2)
+      : [longIn1] "d" (longIn1),
+        [longIn2] "d" (longIn2)
+      : "cc"
+  );
+  return intRes;
+}
 
 // Some useful constants
 
@@ -330,14 +334,14 @@ void Stepper::wake_up() {
  */
 void Stepper::set_directions() {
 
-  #define SET_STEP_DIR(AXIS) \
-    if (motor_direction(AXIS ##_AXIS)) { \
-      AXIS ##_APPLY_DIR(INVERT_## AXIS ##_DIR, false); \
-      count_direction[AXIS ##_AXIS] = -1; \
+  #define SET_STEP_DIR(A) \
+    if (motor_direction(_AXIS(A))) { \
+      A##_APPLY_DIR(INVERT_## A##_DIR, false); \
+      count_direction[_AXIS(A)] = -1; \
     } \
     else { \
-      AXIS ##_APPLY_DIR(!INVERT_## AXIS ##_DIR, false); \
-      count_direction[AXIS ##_AXIS] = 1; \
+      A##_APPLY_DIR(!INVERT_## A##_DIR, false); \
+      count_direction[_AXIS(A)] = 1; \
     }
 
   #if HAS_X_DIR
@@ -1506,10 +1510,7 @@ void Stepper::isr() {
           ? _eval_bezier_curve(acceleration_time)
           : current_block->cruise_rate;
     #else
-      MultiU24X32toH16(acc_step_rate, acceleration_time, current_block->acceleration_rate);
-      acc_step_rate += current_block->initial_rate;
-
-      // upper limit
+      acc_step_rate = MultiU24X32toH16(acceleration_time, current_block->acceleration_rate) + current_block->initial_rate;
       NOMORE(acc_step_rate, current_block->nominal_rate);
     #endif
 
@@ -1540,7 +1541,6 @@ void Stepper::isr() {
     #if ENABLED(BEZIER_JERK_CONTROL)
       // If this is the 1st time we process the 2nd half of the trapezoid...
       if (!bezier_2nd_half) {
-
         // Initialize the Bézier speed curve
         _calc_bezier_curve_coeffs(current_block->cruise_rate, current_block->final_rate, current_block->deceleration_time_inverse);
         bezier_2nd_half = true;
@@ -1553,14 +1553,14 @@ void Stepper::isr() {
     #else
 
       // Using the old trapezoidal control
-      MultiU24X32toH16(step_rate, deceleration_time, current_block->acceleration_rate);
-
+      step_rate = MultiU24X32toH16(deceleration_time, current_block->acceleration_rate);
       if (step_rate < acc_step_rate) { // Still decelerating?
         step_rate = acc_step_rate - step_rate;
         NOLESS(step_rate, current_block->final_rate);
       }
       else
         step_rate = current_block->final_rate;
+
     #endif
 
     // step_rate to timer interval
@@ -1623,29 +1623,51 @@ void Stepper::isr() {
     #elif ENABLED(DUAL_X_CARRIAGE) || ENABLED(DUAL_NOZZLE_DUPLICATION_MODE)
       #define SET_E_STEP_DIR(INDEX) do{ if (e_steps) { if (e_steps < 0) REV_E_DIR(); else NORM_E_DIR(); } }while(0)
     #elif ENABLED(SWITCHING_EXTRUDER)
-      #define SET_E_STEP_DIR(INDEX) do{ if (e_steps) { switch (INDEX) { \
-          case 0: case 1: E0_DIR_WRITE(!INVERT_E0_DIR ^ TEST(INDEX, 0) ^ (e_steps < 0)); break; \
-          case 2: case 3: E1_DIR_WRITE(!INVERT_E1_DIR ^ TEST(INDEX, 0) ^ (e_steps < 0)); break; \
-                  case 4: E2_DIR_WRITE(!INVERT_E2_DIR ^ TEST(INDEX, 0) ^ (e_steps < 0)); \
-      } } }while(0)
+      #if EXTRUDERS > 4
+        #define SET_E_STEP_DIR(INDEX) do{ if (e_steps) { switch (INDEX) { \
+            case 0: case 1: E0_DIR_WRITE(!INVERT_E0_DIR ^ TEST(INDEX, 0) ^ (e_steps < 0)); break; \
+            case 2: case 3: E1_DIR_WRITE(!INVERT_E1_DIR ^ TEST(INDEX, 0) ^ (e_steps < 0)); break; \
+                    case 4: E2_DIR_WRITE(!INVERT_E2_DIR ^ TEST(INDEX, 0) ^ (e_steps < 0)); \
+        } } }while(0)
+      #elif EXTRUDERS > 2
+        #define SET_E_STEP_DIR(INDEX) do{ if (e_steps) { switch (INDEX) { \
+            case 0: case 1: E0_DIR_WRITE(!INVERT_E0_DIR ^ TEST(INDEX, 0) ^ (e_steps < 0)); break; \
+            case 2: case 3: E1_DIR_WRITE(!INVERT_E1_DIR ^ TEST(INDEX, 0) ^ (e_steps < 0)); break; \
+        } } }while(0)
+      #else
+        #define SET_E_STEP_DIR(INDEX) do{ if (e_steps) E0_DIR_WRITE(!INVERT_E0_DIR ^ TEST(INDEX, 0) ^ (e_steps < 0)); }while(0)
+      #endif
     #else
-      #define SET_E_STEP_DIR(INDEX) do{ if (e_steps) E## INDEX ##_DIR_WRITE(e_steps < 0 ? INVERT_E## INDEX ##_DIR : !INVERT_E## INDEX ##_DIR); }while(0)
+      #define SET_E_STEP_DIR(INDEX) do{ if (e_steps) E## INDEX ##_DIR_WRITE(!INVERT_E## INDEX ##_DIR ^ (e_steps < 0)); }while(0)
     #endif
 
     #if ENABLED(DUAL_X_CARRIAGE) || ENABLED(DUAL_NOZZLE_DUPLICATION_MODE)
       #define START_E_PULSE(INDEX) do{ if (e_steps) E_STEP_WRITE(!INVERT_E_STEP_PIN); }while(0)
-      #define STOP_E_PULSE(INDEX) do{ if (e_steps) { E_STEP_WRITE(INVERT_E_STEP_PIN); e_steps < 0 ? ++e_steps : --e_steps; } }while(0)
+      #define STOP_E_PULSE(INDEX) do{ if (e_steps) { e_steps < 0 ? ++e_steps : --e_steps; E_STEP_WRITE(INVERT_E_STEP_PIN); } }while(0)
     #elif ENABLED(SWITCHING_EXTRUDER)
-      #define START_E_PULSE(INDEX) do{ if (e_steps) { switch (INDEX) { \
-          case 0: case 1: E0_DIR_WRITE(!INVERT_E_STEP_PIN); break; \
-          case 2: case 3: E1_DIR_WRITE(!INVERT_E_STEP_PIN); break; \
-                  case 4: E2_DIR_WRITE(!INVERT_E_STEP_PIN); \
-      } } }while(0)
-      #define STOP_E_PULSE(INDEX) do{ if (e_steps) { switch (INDEX) { \
-          case 0: case 1: E0_DIR_WRITE(!INVERT_E_STEP_PIN); break; \
-          case 2: case 3: E1_DIR_WRITE(!INVERT_E_STEP_PIN); break; \
-                  case 4: E2_DIR_WRITE(!INVERT_E_STEP_PIN); \
-      } } }while(0)
+      #if EXTRUDERS > 4
+        #define START_E_PULSE(INDEX) do{ if (e_steps) { switch (INDEX) { \
+            case 0: case 1: E0_DIR_WRITE(!INVERT_E_STEP_PIN); break; \
+            case 2: case 3: E1_DIR_WRITE(!INVERT_E_STEP_PIN); break; \
+                    case 4: E2_DIR_WRITE(!INVERT_E_STEP_PIN); } \
+        } }while(0)
+        #define STOP_E_PULSE(INDEX) do{ if (e_steps) { \
+          e_steps < 0 ? ++e_steps : --e_steps; \
+          switch (INDEX) { \
+            case 0: case 1: E0_DIR_WRITE(INVERT_E_STEP_PIN); break; \
+            case 2: case 3: E1_DIR_WRITE(INVERT_E_STEP_PIN); break; \
+                    case 4: E2_DIR_WRITE(INVERT_E_STEP_PIN); } \
+        } }while(0)
+      #elif EXTRUDERS > 2
+        #define START_E_PULSE(INDEX) do{ if (e_steps) { if (INDEX < 2) E0_DIR_WRITE(!INVERT_E_STEP_PIN); else E1_DIR_WRITE(!INVERT_E_STEP_PIN); } }while(0)
+        #define STOP_E_PULSE(INDEX) do{ if (e_steps) { \
+          e_steps < 0 ? ++e_steps : --e_steps; \
+          if (INDEX < 2) E0_DIR_WRITE(INVERT_E_STEP_PIN); else E1_DIR_WRITE(INVERT_E_STEP_PIN); \
+        } }while(0)
+      #else
+        #define START_E_PULSE(INDEX) do{ if (e_steps) E0_DIR_WRITE(!INVERT_E_STEP_PIN); }while(0)
+        #define STOP_E_PULSE(INDEX) do{ if (e_steps) { e_steps < 0 ? ++e_steps : --e_steps; E0_DIR_WRITE(INVERT_E_STEP_PIN); }while(0)
+      #endif
     #else
       #define START_E_PULSE(INDEX) do{ if (e_steps) E## INDEX ##_STEP_WRITE(!INVERT_E_STEP_PIN); }while(0)
       #define STOP_E_PULSE(INDEX) do { if (e_steps) { e_steps < 0 ? ++e_steps : --e_steps; E## INDEX ##_STEP_WRITE(INVERT_E_STEP_PIN); } }while(0)
@@ -2095,9 +2117,9 @@ void Stepper::report_positions() {
   #define BABYSTEP_AXIS(AXIS, INVERT, DIR) {            \
       const uint8_t old_dir = _READ_DIR(AXIS);          \
       _ENABLE(AXIS);                                    \
-      _SAVE_START;                                      \
       _APPLY_DIR(AXIS, _INVERT_DIR(AXIS)^DIR^INVERT);   \
-      _PULSE_WAIT;                                      \
+      DELAY_NS(400); /* DRV8825 */                      \
+      _SAVE_START;                                      \
       _APPLY_STEP(AXIS)(!_INVERT_STEP_PIN(AXIS), true); \
       _PULSE_WAIT;                                      \
       _APPLY_STEP(AXIS)(_INVERT_STEP_PIN(AXIS), true);  \
@@ -2167,6 +2189,8 @@ void Stepper::report_positions() {
           X_DIR_WRITE(INVERT_X_DIR ^ z_direction);
           Y_DIR_WRITE(INVERT_Y_DIR ^ z_direction);
           Z_DIR_WRITE(INVERT_Z_DIR ^ z_direction);
+
+          DELAY_NS(400); // DRV8825
 
           _SAVE_START;
 
